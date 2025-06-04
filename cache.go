@@ -3,46 +3,20 @@ package midstore
 import (
 	"bufio"
 	"context"
-	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-type Type interface {
-	Marshal() ([]byte, error)
-}
+const (
+	defaultMaxLength     int = 1000        //本地容量，超过则触发落盘
+	defaultFlushInterval     = time.Minute //本地落盘时间间隔，达到则触发落盘
 
-// ICache 本地缓存
-type ICache[T Type] interface {
-	Add(row T)        //添加一条数据到本地缓存
-	AddList(rows []T) //添加一批数据到本地缓存
-	Len() int         //本地缓存的长度
-	Start()           //启动后台刷新携程
-	Stop()            //停止后台刷新并释放资源
-}
-
-// IHandle 本地缓存回调
-type IHandle[T Type] interface {
-	FlushCall(rows []T) error  //成功返回nil，失败返回错误
-	FailedCall(rows []T) error //FlushCall执行失败时回调
-}
-
-// ILog 日志接口
-type ILog interface {
-	Debugf(format string, v ...any)
-	Infof(format string, v ...any)
-	Warnf(format string, v ...any)
-	Errorf(format string, v ...any)
-}
-
-// IWriter 落盘策略
-type IWriter interface {
-	GetWriter() (*os.File, error)
-	Close() error
-}
+	defaultFailedFileDir                 = "." // 落盘回调失败回调失败的备份数据目录
+	defaultFailedFileDirMode os.FileMode = 0755
+	defaultFailedFileName                = "failed" //失败落盘的文件开始名称
+)
 
 type Cache[T Type] struct {
 	rw           sync.RWMutex
@@ -52,32 +26,12 @@ type Cache[T Type] struct {
 	flushChannel chan struct{} //刷新信号
 	ctx          context.Context
 	cancel       context.CancelFunc
-	h            IHandle[T]
 	options      *Options
 	ticker       *time.Ticker
+	h            IHandle[T]
 	writer       IWriter //刷新失败后执行失败回调失败的数据直接写入本地文件系统
 	log          ILog
 }
-
-type Options struct {
-	flushInterval     time.Duration //间隔多少时间向flushChannel发送一个执行信号
-	maxLength         int           //最大缓存容量，Cache.length达到这个长度时向flushChannel发送一个执行信号
-	log               ILog
-	failedFileDir     string //失败落盘目录
-	failedFileDirMode os.FileMode
-	failedFileName    string //失败落盘文件名称
-	enableLocalBackup bool   //是否启用失败后回调失败落盘
-}
-
-type Option func(*Options)
-
-const (
-	defaultMaxLength         int         = 1000        //本地容量，超过则触发落盘
-	defaultFlushInterval                 = time.Minute //本地落盘时间间隔，达到则触发落盘
-	defaultFailedFileDir                 = "."         // 落盘回调失败回调失败的备份数据目录
-	defaultFailedFileDirMode os.FileMode = 0755
-	defaultFailedFileName                = "failed" //失败落盘的文件开始名称
-)
 
 var _ ICache[Type] = &Cache[Type]{}
 
@@ -116,51 +70,6 @@ func NewCache[T Type](h IHandle[T], opts ...Option) *Cache[T] {
 		data:         make([]T, 0, defaultCap),
 		writer:       &defaultWriter{opt: opt},
 		log:          opt.log,
-	}
-}
-
-func WithMaxLength(max int) Option {
-	return func(o *Options) {
-		if max <= 0 {
-			max = defaultMaxLength
-		}
-		o.maxLength = max
-	}
-}
-
-func WithFlushInterval(i time.Duration) Option {
-	return func(o *Options) {
-		if i <= 0 {
-			i = defaultFlushInterval
-		}
-		o.flushInterval = i
-	}
-}
-
-func WithLog(l ILog) Option {
-	return func(o *Options) {
-		if l == nil {
-			l = newLog()
-		}
-		o.log = l
-	}
-}
-
-func WithFailedFileDirAndMode(dir string, filename string, mode os.FileMode) Option {
-	return func(o *Options) {
-		o.enableLocalBackup = dir != ""
-		o.failedFileDir = dir
-		if dir != "" {
-			o.failedFileDir = dir
-		}
-
-		if mode != 0 {
-			o.failedFileDirMode = mode
-		}
-
-		if filename != "" {
-			o.failedFileName = defaultFailedFileName
-		}
 	}
 }
 
@@ -316,42 +225,4 @@ func (c *Cache[T]) failedCallBack(rows []T) {
 	_ = w.Flush()
 
 	return
-}
-
-type defaultWriter struct {
-	opt      *Options
-	curFile  *os.File
-	fileName string
-}
-
-func (w *defaultWriter) GetWriter() (*os.File, error) {
-	filename := filepath.Join(w.opt.failedFileDir, fmt.Sprintf("%s.%s.log", w.opt.failedFileName, time.Now().Format("20060102")))
-	if w.curFile != nil && w.fileName == filename {
-		return w.curFile, nil
-	}
-
-	if w.curFile != nil {
-		_ = w.curFile.Close()
-	}
-
-	if _, err := os.Stat(w.opt.failedFileDir); os.IsNotExist(err) {
-		if err = os.MkdirAll(w.opt.failedFileDir, w.opt.failedFileDirMode); err != nil {
-			return nil, err
-		}
-	}
-
-	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return nil, err
-	}
-	w.curFile = file
-	w.fileName = filename
-	return file, nil
-}
-
-func (w *defaultWriter) Close() error {
-	if w.curFile != nil {
-		return w.curFile.Close()
-	}
-	return nil
 }
