@@ -3,25 +3,29 @@ package midstore
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
+type Type interface {
+	Marshal() ([]byte, error)
+}
+
 // ICache 本地缓存
-type ICache[T any] interface {
-	Add(data T)       //添加一条数据到本地缓存
-	AddList(list []T) //添加一批数据到本地缓存
-	Len() uint64      //本地缓存的长度
+type ICache[T Type] interface {
+	Add(row T)        //添加一条数据到本地缓存
+	AddList(rows []T) //添加一批数据到本地缓存
+	Len() int         //本地缓存的长度
 	Start()           //启动后台刷新携程
 	Stop()            //停止后台刷新并释放资源
 }
 
 // IHandle 本地缓存回调
-type IHandle[T any] interface {
+type IHandle[T Type] interface {
 	FlushCall(rows []T) error  //成功返回nil，失败返回错误
 	FailedCall(rows []T) error //FlushCall执行失败时回调
 }
@@ -34,7 +38,13 @@ type ILog interface {
 	Errorf(format string, v ...any)
 }
 
-type Cache[T any] struct {
+// IWriter 落盘策略
+type IWriter interface {
+	GetWriter() (*os.File, error)
+	Close() error
+}
+
+type Cache[T Type] struct {
 	rw           sync.RWMutex
 	wg           sync.WaitGroup
 	data         []T           //存储数据
@@ -45,7 +55,8 @@ type Cache[T any] struct {
 	h            IHandle[T]
 	options      *Options
 	ticker       *time.Ticker
-	failedFile   *os.File //刷新失败后执行失败回调失败的数据直接写入本地文件系统
+	writer       IWriter //刷新失败后执行失败回调失败的数据直接写入本地文件系统
+	log          ILog
 }
 
 type Options struct {
@@ -53,28 +64,34 @@ type Options struct {
 	maxLength         int           //最大缓存容量，Cache.length达到这个长度时向flushChannel发送一个执行信号
 	log               ILog
 	failedFileDir     string //失败落盘目录
+	failedFileDirMode os.FileMode
 	failedFileName    string //失败落盘文件名称
 	enableLocalBackup bool   //是否启用失败后回调失败落盘
 }
 
 type Option func(*Options)
 
-type StructType interface {
-	MustStruct()
-}
-
 const (
-	defaultMaxLength     int = 1000
-	defaultFlushInterval     = time.Minute
+	defaultMaxLength         int         = 1000        //本地容量，超过则触发落盘
+	defaultFlushInterval                 = time.Minute //本地落盘时间间隔，达到则触发落盘
+	defaultFailedFileDir                 = "."         // 落盘回调失败回调失败的备份数据目录
+	defaultFailedFileDirMode os.FileMode = 0755
+	defaultFailedFileName                = "failed" //失败落盘的文件开始名称
 )
 
-func NewCache[T StructType](h IHandle[T], opts ...Option) *Cache[T] {
+var _ ICache[Type] = &Cache[Type]{}
+
+func NewCache[T Type](h IHandle[T], opts ...Option) *Cache[T] {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	opt := &Options{
-		maxLength:     defaultMaxLength,
-		flushInterval: defaultFlushInterval,
-		log:           newLog(),
+		maxLength:         defaultMaxLength,
+		flushInterval:     defaultFlushInterval,
+		failedFileDir:     defaultFailedFileDir,
+		failedFileDirMode: defaultFailedFileDirMode,
+		failedFileName:    defaultFailedFileName,
+		log:               newLog(),
+		enableLocalBackup: true,
 	}
 
 	for _, o := range opts {
@@ -97,6 +114,8 @@ func NewCache[T StructType](h IHandle[T], opts ...Option) *Cache[T] {
 		options:      opt,
 		h:            h,
 		data:         make([]T, 0, defaultCap),
+		writer:       &defaultWriter{opt: opt},
+		log:          opt.log,
 	}
 }
 
@@ -127,26 +146,41 @@ func WithLog(l ILog) Option {
 	}
 }
 
-func WithFailedFileDir(dir string) Option {
+func WithFailedFileDirAndMode(dir string, filename string, mode os.FileMode) Option {
 	return func(o *Options) {
 		o.enableLocalBackup = dir != ""
 		o.failedFileDir = dir
+		if dir != "" {
+			o.failedFileDir = dir
+		}
+
+		if mode != 0 {
+			o.failedFileDirMode = mode
+		}
+
+		if filename != "" {
+			o.failedFileName = defaultFailedFileName
+		}
 	}
 }
 
 // Add push data into Cache.data list front .
-func (c *Cache[T]) Add(data T) {
+func (c *Cache[T]) Add(row T) {
 	c.rw.Lock()
 	defer c.rw.Unlock()
-	c.data = append(c.data, data)
+	c.data = append(c.data, row)
 	c.sendFlushSignalIfReachMaxLength()
 }
 
 // AddList push data into Cache.data list front .
-func (c *Cache[T]) AddList(elems []T) {
+func (c *Cache[T]) AddList(rows []T) {
+	if len(rows) == 0 {
+		return
+	}
+
 	c.rw.Lock()
 	defer c.rw.Unlock()
-	c.data = append(c.data, elems...)
+	c.data = append(c.data, rows...)
 	c.sendFlushSignalIfReachMaxLength()
 }
 
@@ -170,7 +204,7 @@ func (c *Cache[T]) Stop() {
 	c.wg.Add(1)
 	c.cancel()
 	c.wg.Wait()
-	c.closeFailedFile()
+	_ = c.writer.Close()
 
 	if c.flushChannel != nil {
 		close(c.flushChannel)
@@ -190,7 +224,11 @@ func (c *Cache[T]) tick() {
 	}
 	c.ticker = time.NewTicker(c.options.flushInterval)
 	for range c.ticker.C {
-		c.flushChannel <- struct{}{}
+		select {
+		case c.flushChannel <- struct{}{}:
+		case <-c.ctx.Done():
+			return
+		}
 	}
 }
 
@@ -202,7 +240,7 @@ func (c *Cache[T]) run() {
 				func() {
 					defer func() {
 						if err := recover(); err != nil {
-							c.options.log.Errorf("panic recovered: %v", err)
+							c.log.Errorf("panic recovered: %v", err)
 						}
 					}()
 					c.flush()
@@ -224,43 +262,52 @@ func (c *Cache[T]) flush() {
 	if c.h == nil {
 		return
 	}
+
 	total := len(c.data)
 	if total == 0 {
 		return
 	}
+
 	defer func() {
 		c.data = c.data[:0]
 	}()
-	c.options.log.Debugf("开始刷新数据")
+
+	c.log.Debugf("开始刷新数据")
+
 	var err error
 	//刷新数据
 	if err = c.h.FlushCall(c.data); err == nil {
-		c.options.log.Infof(fmt.Sprintf("FlushCall success list total: %v", total))
+		c.log.Infof("FlushCall success list total: %v", total)
 		return
+	} else {
+		c.log.Errorf("FlushCall error list total: %v, error: %v", total, err)
 	}
-	c.options.log.Errorf(fmt.Sprintf("FlushCall error list total: %v, error: %v", total, err))
+
 	if err = c.h.FailedCall(c.data); err == nil {
-		c.options.log.Infof(fmt.Sprintf("FailedCall success list total: %v", total))
+		c.log.Infof("FailedCall success list total: %v", total)
 		return
+	} else {
+		c.log.Errorf("FailedCall error list total: %v, error: %v", total, err)
 	}
-	c.options.log.Errorf(fmt.Sprintf("FailedCall error list total: %v, error: %v", total, err))
+
 	c.failedCallBack(c.data)
 }
 
 func (c *Cache[T]) failedCallBack(rows []T) {
-	if len(rows) == 0 {
+	if !c.options.enableLocalBackup || len(rows) == 0 {
 		return
 	}
-	if _, err := c.getFailedFile(); err != nil {
-		c.options.log.Errorf(fmt.Sprintf("getFailedFile error, data: %v, err: %v", rows, err))
+	file, err := c.writer.GetWriter()
+	if err != nil {
+		c.log.Errorf("getFailedFile error, data: %v, err: %v", rows, err)
 		return
 	}
 
-	w := bufio.NewWriter(c.failedFile)
+	w := bufio.NewWriter(file)
 	for _, row := range rows {
-		body, err := json.Marshal(row)
-		if err != nil {
-			c.options.log.Errorf("failedCallBack json.Marshal error,row: %+v：%v", row, err)
+		body, er := row.Marshal()
+		if er != nil {
+			c.log.Errorf("failedCallBack json.Marshal error,row: %+v：%v", row, er)
 			continue
 		}
 		_, _ = w.Write(body)
@@ -271,40 +318,40 @@ func (c *Cache[T]) failedCallBack(rows []T) {
 	return
 }
 
-func (c *Cache[T]) closeFailedFile() {
-	if c.failedFile != nil {
-		_ = c.failedFile.Close()
-		c.failedFile = nil
-	}
+type defaultWriter struct {
+	opt      *Options
+	curFile  *os.File
+	fileName string
 }
 
-func (c *Cache[T]) openFailedFile(filename string) (*os.File, error) {
-	return os.OpenFile(filename, os.O_CREATE|os.O_RDWR|os.O_APPEND, 06666)
-}
-
-func (c *Cache[T]) getFailedFile() (*os.File, error) {
-	filename := c.getFailedFileName()
-	if c.failedFile != nil && c.failedFile.Name() == filename {
-		return c.failedFile, nil
+func (w *defaultWriter) GetWriter() (*os.File, error) {
+	filename := filepath.Join(w.opt.failedFileDir, fmt.Sprintf("%s.%s.log", w.opt.failedFileName, time.Now().Format("20060102")))
+	if w.curFile != nil && w.fileName == filename {
+		return w.curFile, nil
 	}
 
-	if c.failedFile != nil {
-		_ = c.failedFile.Close()
+	if w.curFile != nil {
+		_ = w.curFile.Close()
 	}
 
-	if _, err := os.Stat(c.options.failedFileDir); os.IsNotExist(err) {
-		c.options.log.Infof("创建失败文件夹：%s", c.options.failedFileDir)
-		os.MkdirAll(c.options.failedFileDir, 0755)
+	if _, err := os.Stat(w.opt.failedFileDir); os.IsNotExist(err) {
+		if err = os.MkdirAll(w.opt.failedFileDir, w.opt.failedFileDirMode); err != nil {
+			return nil, err
+		}
 	}
 
 	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, err
 	}
-	c.failedFile = file
+	w.curFile = file
+	w.fileName = filename
 	return file, nil
 }
 
-func (c *Cache[T]) getFailedFileName() string {
-	return fmt.Sprintf("failed.%s.log", time.Now().Format("20060102"))
+func (w *defaultWriter) Close() error {
+	if w.curFile != nil {
+		return w.curFile.Close()
+	}
+	return nil
 }

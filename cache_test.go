@@ -1,6 +1,7 @@
 package midstore
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -9,15 +10,19 @@ import (
 )
 
 type elem struct {
-	Id   int
-	Name string
+	Id   int    `json:"id"`
+	Name string `json:"name"`
 }
 
-func (elem) MustStruct() {
-
+func (e elem) Marshal() ([]byte, error) {
+	return json.Marshal(e)
 }
 
 type myHandle struct {
+}
+
+func newMyHandle() *myHandle {
+	return &myHandle{}
 }
 
 func (m *myHandle) FlushCall(rows []elem) error {
@@ -37,8 +42,7 @@ func (m *myHandle) FailedCall(rows []elem) error {
 }
 
 func TestNewCache(t *testing.T) {
-	myH := &myHandle{}
-	c := NewCache(myH,
+	c := NewCache(newMyHandle(),
 		WithMaxLength(20),
 	)
 	c.Start()

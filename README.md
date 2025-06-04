@@ -18,12 +18,14 @@
 ### `ICache`
 
 ```go
-type ICache interface {
-Add(data any)
-AddList(list []any)
-Len() uint64
-Start()
-Stop()
+package midstore
+
+type ICache[T Type] interface {
+    Add(data T)
+    AddList(list []any)
+    Len() uint64
+    Start()
+    Stop()
 }
 ```
 
@@ -39,12 +41,12 @@ Stop()
 
 ---
 
-### `IHandle[T]`
+### `IHandle[Type]`
 
 ```go
-type IHandle[T any] interface {
-FlushCall(rows []T) error // 成功返回 nil，失败返回错误
-FailedCall(rows []T) error // FlushCall 失败时执行此回调
+type IHandle[T Type] interface {
+    FlushCall(rows []T) error // 成功返回 nil，失败返回错误
+    FailedCall(rows []T) error // FlushCall 失败时执行此回调
 }
 ```
 
@@ -61,10 +63,10 @@ FailedCall(rows []T) error // FlushCall 失败时执行此回调
 
 ```go
 type ILog interface {
-Debugf(format string, v ...any)
-Infof(format string, v ...any)
-Warnf(format string, v ...any)
-Errorf(format string, v ...any)
+    Debugf(format string, v ...any)
+    Infof(format string, v ...any)
+    Warnf(format string, v ...any)
+    Errorf(format string, v ...any)
 }
 ```
 
@@ -74,10 +76,10 @@ Errorf(format string, v ...any)
 
 ## 🛠️ 核心结构体
 
-### `Cache[T]`
+### `Cache[Type]`
 
 ```go
-type Cache[T any] struct {
+type Cache[T Type] struct {
 // 内部字段略
 }
 ```
@@ -94,12 +96,12 @@ type Cache[T any] struct {
 
 ```go
 type Options struct {
-flushInterval     time.Duration
-maxLength         int
-log               ILog
-failedFileDir     string
-failedFileName    string
-enableLocalBackup bool
+    flushInterval     time.Duration
+    maxLength         int
+    log               ILog
+    failedFileDir     string
+    failedFileName    string
+    enableLocalBackup bool
 }
 ```
 
@@ -120,7 +122,7 @@ enableLocalBackup bool
 #### `NewCache[T any]`
 
 ```go
-func NewCache[T any](h IHandle[T], opts ...Option) *Cache[T]
+func NewCache[T Type](h IHandle[T], opts ...Option) *Cache[T]
 ```
 
 创建一个新的缓存实例。
@@ -134,8 +136,8 @@ func NewCache[T any](h IHandle[T], opts ...Option) *Cache[T]
 
 ```go
 cache := midstore.NewCache[MyData](myHandler,
-midstore.WithMaxLength(500),
-midstore.WithFlushInterval(time.Second*30),
+    midstore.WithMaxLength(500),
+    midstore.WithFlushInterval(time.Second*30),
 )
 ```
 
@@ -155,9 +157,9 @@ midstore.WithFlushInterval(time.Second*30),
 
 设置自定义日志接口。
 
-#### `WithFailedFileDir(dir string) Option`
+#### `WithFailedFileDirAndMode(dir string, filename string, mode os.FileMode) Option`
 
-设置失败数据落盘的目录路径。
+设置失败数据落盘的目录路径,文件名,模式
 
 ---
 
@@ -198,45 +200,52 @@ midstore.WithFlushInterval(time.Second*30),
 ### 示例1: 初始化并使用 Cache
 
 ```go
-
+// 定义元素结构结构体
 type elem struct {
-    Id   int
-    Name string
+    Id   int    `json:"id"`
+    Name string `json:"name"`
 }
 
-func (elem) MustStruct() {
-
+// 实现元素结构的方法
+func (e elem) Marshal() ([]byte, error) {
+    return json.Marshal(e)
 }
 
+// 定义元素落盘处理器
 type myHandle struct {
 }
 
+func newMyHandle() *myHandle {
+    return &myHandle{}
+}
+
+// 实现落盘回调
 func (m *myHandle) FlushCall(rows []elem) error {
     for _, e := range rows {
         fmt.Println(e)
     }
     fmt.Println("刷新成功")
-    return nil
+    return fmt.Errorf("失败1")
 }
 
+// 实现落盘失败回调
 func (m *myHandle) FailedCall(rows []elem) error {
     for _, e := range rows {
         fmt.Println(e)
     }
     fmt.Println("失败回调成功")
-return nil
+    return fmt.Errorf("失败2")
 }
 
 func TestNewCache(t *testing.T) {
-    myH := &myHandle{}
-	c := NewCache(myH,
-        WithMaxLength(20),
-    )
+    c := NewCache(newMyHandle(),
+            WithMaxLength(20), 
+		)
     c.Start()
-    
+
     ch := make(chan os.Signal, 1)
-    
-    go func () {
+
+    go func() {
         i := 1
         for {
             c.Add(elem{
@@ -248,15 +257,16 @@ func TestNewCache(t *testing.T) {
             fmt.Println("长度：", c.Len())
         }
     }()
-    
+
     signal.Notify(ch, os.Interrupt, os.Kill)
-    
+
     select {
     case <-ch:
         c.Stop()
         fmt.Println("stop")
     }
 }
+
 
 ```
 
