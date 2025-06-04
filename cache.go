@@ -232,6 +232,7 @@ func (c *Cache[T]) failedCallBack(rows []T) {
 	}
 
 	if err = w.Flush(); err != nil {
+		c.log.Errorf("failedCallBack w.Flush error,body: %v：%v", string(allBody), err)
 		c.writer.OnWriteFailed(allBody)
 	}
 
