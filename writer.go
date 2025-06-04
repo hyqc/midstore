@@ -38,6 +38,10 @@ func (w *defaultWriter) GetWriter() (*os.File, error) {
 	return file, nil
 }
 
+func (w *defaultWriter) OnWriteFailed(data []byte) {
+	w.opt.log.Warnf("write failed file error,data: %s", string(data))
+}
+
 func (w *defaultWriter) Close() error {
 	if w.curFile != nil {
 		return w.curFile.Close()

@@ -52,6 +52,10 @@ func NewCache[T Type](h IHandle[T], opts ...Option) *Cache[T] {
 		o(opt)
 	}
 
+	if opt.writer == nil {
+		opt.writer = &defaultWriter{opt: opt}
+	}
+
 	defaultCap := opt.maxLength
 	if defaultCap > 300 {
 		// 5 * 60 每秒5条
@@ -68,7 +72,7 @@ func NewCache[T Type](h IHandle[T], opts ...Option) *Cache[T] {
 		options:      opt,
 		h:            h,
 		data:         make([]T, 0, defaultCap),
-		writer:       &defaultWriter{opt: opt},
+		writer:       opt.writer,
 		log:          opt.log,
 	}
 }
@@ -181,22 +185,22 @@ func (c *Cache[T]) flush() {
 		c.data = c.data[:0]
 	}()
 
-	c.log.Debugf("开始刷新数据")
+	c.log.Debugf("开始刷新数据，共 %d 条", total)
 
 	var err error
 	//刷新数据
 	if err = c.h.FlushCall(c.data); err == nil {
-		c.log.Infof("FlushCall success list total: %v", total)
+		c.log.Infof("FlushCall success list total: %d", total)
 		return
 	} else {
-		c.log.Errorf("FlushCall error list total: %v, error: %v", total, err)
+		c.log.Errorf("FlushCall error list total: %d, error: %v", total, err)
 	}
 
 	if err = c.h.FailedCall(c.data); err == nil {
-		c.log.Infof("FailedCall success list total: %v", total)
+		c.log.Infof("FailedCall success list total: %d", total)
 		return
 	} else {
-		c.log.Errorf("FailedCall error list total: %v, error: %v", total, err)
+		c.log.Errorf("FailedCall error list total: %d, error: %v", total, err)
 	}
 
 	c.failedCallBack(c.data)
@@ -211,7 +215,7 @@ func (c *Cache[T]) failedCallBack(rows []T) {
 		c.log.Errorf("getFailedFile error, data: %v, err: %v", rows, err)
 		return
 	}
-
+	allBody := make([]byte, 0, len(rows))
 	w := bufio.NewWriter(file)
 	for _, row := range rows {
 		body, er := row.Marshal()
@@ -219,10 +223,17 @@ func (c *Cache[T]) failedCallBack(rows []T) {
 			c.log.Errorf("failedCallBack json.Marshal error,row: %+v：%v", row, er)
 			continue
 		}
-		_, _ = w.Write(body)
+		allBody = append(append(allBody, body...), '\n')
+		if _, err = w.Write(body); err != nil {
+			c.log.Errorf("failedCallBack w.Write body error,body: %v：%v", string(body), er)
+			continue
+		}
 		_, _ = w.WriteString("\n")
 	}
-	_ = w.Flush()
+
+	if err = w.Flush(); err != nil {
+		c.writer.OnWriteFailed(allBody)
+	}
 
 	return
 }

@@ -13,6 +13,7 @@ type Options struct {
 	failedFileDirMode os.FileMode
 	failedFileName    string //失败落盘文件名称
 	enableLocalBackup bool   //是否启用失败后回调失败落盘
+	writer            IWriter
 }
 
 type Option func(*Options)
