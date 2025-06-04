@@ -47,7 +47,6 @@ func WithLog(l ILog) Option {
 func WithFailedFileDirAndMode(dir string, filename string, mode os.FileMode) Option {
 	return func(o *Options) {
 		o.enableLocalBackup = dir != ""
-		o.failedFileDir = dir
 		if dir != "" {
 			o.failedFileDir = dir
 		}
