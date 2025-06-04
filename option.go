@@ -56,7 +56,7 @@ func WithFailedFileDirAndMode(dir string, filename string, mode os.FileMode) Opt
 		}
 
 		if filename != "" {
-			o.failedFileName = defaultFailedFileName
+			o.failedFileName = filename
 		}
 	}
 }
