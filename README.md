@@ -111,7 +111,7 @@ type Options struct {
 | `maxLength`         | `int`           | 最大缓存条数，超过该值触发刷新，默认 1000 |
 | `log`               | `ILog`          | 日志接口实例，默认使用内置控制台日志      |
 | `failedFileDir`     | `string`        | 刷新失败后的本地文件保存路径，默认当前目录   |
-| `enableLocalBackup` | `bool`          | 是否启用本地落盘备份，默认关闭         |
+| `enableLocalBackup` | `bool`          | 是否启用本地落盘备份，默认开启         |
 
 ---
 
