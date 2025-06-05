@@ -32,6 +32,8 @@ type ILog interface {
 // IWriter 落盘策略
 type IWriter interface {
 	GetWriter() (*os.File, error)
-	OnWriteFailed(data []byte)
 	Close() error
+}
+
+type IFailedBackRows struct {
 }

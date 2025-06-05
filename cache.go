@@ -3,6 +3,7 @@ package midstore
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -31,6 +32,16 @@ type Cache[T Type] struct {
 	h            IHandle[T]
 	writer       IWriter //刷新失败后执行失败回调失败的数据直接写入本地文件系统
 	log          ILog
+}
+
+// FailedBackRows 回调失败的日志格式
+type FailedBackRows[T Type] struct {
+	Time string `json:"time"` //当前时间
+	Data []T    `json:"data"` //保存失败的原始数据
+}
+type FailedBackRow[T Type] struct {
+	Time string `json:"time"` //当前时间
+	Data T      `json:"data"` //保存失败的原始数据
 }
 
 var _ ICache[Type] = &Cache[Type]{}
@@ -215,26 +226,51 @@ func (c *Cache[T]) failedCallBack(rows []T) {
 		c.log.Errorf("getFailedFile error, data: %v, err: %v", rows, err)
 		return
 	}
-	allBody := make([]byte, 0, len(rows))
-	w := bufio.NewWriter(file)
-	for _, row := range rows {
-		body, er := row.Marshal()
-		if er != nil {
-			c.log.Errorf("failedCallBack json.Marshal error,row: %+v：%v", row, er)
-			continue
-		}
-		allBody = append(append(allBody, body...), '\n')
-		if _, err = w.Write(body); err != nil {
-			c.log.Errorf("failedCallBack w.Write body error,body: %v：%v", string(body), er)
-			continue
-		}
-		_, _ = w.WriteString("\n")
-	}
 
-	if err = w.Flush(); err != nil {
-		c.log.Errorf("failedCallBack w.Flush error,body: %v：%v", string(allBody), err)
-		c.writer.OnWriteFailed(allBody)
+	w := bufio.NewWriter(file)
+	if c.options.failedBackRows {
+		c.saveBackRows(w, rows)
+	} else {
+		c.saveBackRow(w, rows)
 	}
 
 	return
+}
+
+func (c *Cache[T]) saveBackRows(w *bufio.Writer, rows []T) {
+	backData := FailedBackRows[T]{
+		Time: time.Now().Format(time.RFC3339),
+		Data: rows,
+	}
+	body, _ := json.Marshal(backData)
+	strBody := string(body)
+	if _, err := w.Write(body); err != nil {
+		c.log.Errorf("failedCallBack w.Write body error,body: %s, err: %v", strBody, err)
+		return
+	}
+	_, _ = w.Write([]byte("\n"))
+
+	if err := w.Flush(); err != nil {
+		c.log.Errorf("failedCallBack w.Flush error,body: %v：%v", strBody, err)
+	}
+}
+
+func (c *Cache[T]) saveBackRow(w *bufio.Writer, rows []T) {
+	now := time.Now().Format(time.RFC3339)
+	for _, row := range rows {
+		item := FailedBackRow[T]{
+			Time: now,
+			Data: row,
+		}
+		body, _ := json.Marshal(item)
+		if _, err := w.Write(body); err != nil {
+			c.log.Errorf("failedCallBack w.Write body error,body: %s, err: %v", string(body), err)
+			continue
+		}
+		_, _ = w.Write([]byte("\n"))
+	}
+
+	if err := w.Flush(); err != nil {
+		c.log.Errorf("failedCallBack w.Flush error,rows: %v：%v", rows, err)
+	}
 }

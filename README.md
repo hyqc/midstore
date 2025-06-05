@@ -161,6 +161,10 @@ cache := midstore.NewCache[MyData](myHandler,
 
 设置失败数据落盘的目录路径,文件名,模式
 
+#### `WithFailedBackRows(t bool) Option`
+
+设置失败写入文件时格式是一批一行还是一行一条，t为true时一批一行
+
 ---
 
 ### 缓存操作方法

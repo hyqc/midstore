@@ -14,6 +14,7 @@ type Options struct {
 	failedFileName    string //失败落盘文件名称
 	enableLocalBackup bool   //是否启用失败后回调失败落盘
 	writer            IWriter
+	failedBackRows    bool //true:一批一行,false:一批N行
 }
 
 type Option func(*Options)
@@ -36,6 +37,7 @@ func WithFlushInterval(i time.Duration) Option {
 	}
 }
 
+// WithLog 自定义日志
 func WithLog(l ILog) Option {
 	return func(o *Options) {
 		if l == nil {
@@ -45,6 +47,14 @@ func WithLog(l ILog) Option {
 	}
 }
 
+// WithFailedBackRows 配置失败备份一批一行记录
+func WithFailedBackRows(t bool) Option {
+	return func(o *Options) {
+		o.failedBackRows = t
+	}
+}
+
+// WithFailedFileDirAndMode 配置失败备份磁盘目录、文件名前缀、文件夹创建模式
 func WithFailedFileDirAndMode(dir string, filename string, mode os.FileMode) Option {
 	return func(o *Options) {
 		o.enableLocalBackup = dir != ""
