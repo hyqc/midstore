@@ -21,11 +21,11 @@
 package midstore
 
 type ICache[T Type] interface {
-    Add(data T)
-    AddList(list []any)
-    Len() uint64
-    Start()
-    Stop()
+	Add(data T)
+	AddList(list []any)
+	Len() uint64
+	Start()
+	Stop()
 }
 ```
 
@@ -45,8 +45,8 @@ type ICache[T Type] interface {
 
 ```go
 type IHandle[T Type] interface {
-    FlushCall(rows []T) error // 成功返回 nil，失败返回错误
-    FailedCall(rows []T) error // FlushCall 失败时执行此回调
+FlushCall(rows []T) error // 成功返回 nil，失败返回错误
+FailedCall(rows []T) error // FlushCall 失败时执行此回调
 }
 ```
 
@@ -63,10 +63,10 @@ type IHandle[T Type] interface {
 
 ```go
 type ILog interface {
-    Debugf(format string, v ...any)
-    Infof(format string, v ...any)
-    Warnf(format string, v ...any)
-    Errorf(format string, v ...any)
+Debugf(format string, v ...any)
+Infof(format string, v ...any)
+Warnf(format string, v ...any)
+Errorf(format string, v ...any)
 }
 ```
 
@@ -96,22 +96,29 @@ type Cache[T Type] struct {
 
 ```go
 type Options struct {
-    flushInterval     time.Duration
-    maxLength         int
-    log               ILog
-    failedFileDir     string
-    failedFileName    string
-    enableLocalBackup bool
+flushInterval     time.Duration
+maxLength         int
+log               ILog
+failedFileDir     string
+failedFileDirMode os.FileMode
+failedFileName    string
+enableLocalBackup bool
+writer            IWriter
+failedBackRows    bool 
 }
 ```
 
-| 字段名                 | 类型              | 描述                      |
-|---------------------|-----------------|-------------------------|
-| `flushInterval`     | `time.Duration` | 刷新间隔时间，默认 1 分钟          |
-| `maxLength`         | `int`           | 最大缓存条数，超过该值触发刷新，默认 1000 |
-| `log`               | `ILog`          | 日志接口实例，默认使用内置控制台日志      |
-| `failedFileDir`     | `string`        | 刷新失败后的本地文件保存路径，默认当前目录   |
-| `enableLocalBackup` | `bool`          | 是否启用本地落盘备份，默认开启         |
+| 字段名                 | 类型              | 描述                                                      |
+|---------------------|-----------------|---------------------------------------------------------|
+| `flushInterval`     | `time.Duration` | 刷新间隔时间，默认 1 分钟                                          |
+| `maxLength`         | `int`           | 最大缓存条数，超过该值触发刷新，默认 1000                                 |
+| `log`               | `ILog`          | 日志接口实例，默认使用内置控制台日志                                      |
+| `failedFileDir`     | `string`        | 刷新失败后的本地文件保存路径，默认当前目录                                   |
+| `failedFileDirMode` | `os.FileMode`   | 文件夹权限配置                                                 |
+| `failedFileName`    | `string`        | 失败落盘文件名前缀，示例test，则文件名为 test.xxx.log，其中xxx为日期格式为20060102 |
+| `enableLocalBackup` | `bool`          | 是否启用回调失败落盘，默认开启                                         |
+| `writer`            | `IWriter`       | 自定义写入接口                                                 |
+| `failedBackRows`    | `bool`          | 回调失败写入磁盘文件的数据格式，true时一批一行，false一批每行一行                   |
 
 ---
 
@@ -136,8 +143,8 @@ func NewCache[T Type](h IHandle[T], opts ...Option) *Cache[T]
 
 ```go
 cache := midstore.NewCache[MyData](myHandler,
-    midstore.WithMaxLength(500),
-    midstore.WithFlushInterval(time.Second*30),
+midstore.WithMaxLength(500),
+midstore.WithFlushInterval(time.Second*30),
 )
 ```
 
@@ -206,13 +213,13 @@ cache := midstore.NewCache[MyData](myHandler,
 ```go
 // 定义元素结构结构体
 type elem struct {
-    Id   int    `json:"id"`
-    Name string `json:"name"`
+Id   int    `json:"id"`
+Name string `json:"name"`
 }
 
 // 实现元素结构的方法
 func (e elem) Marshal() ([]byte, error) {
-    return json.Marshal(e)
+return json.Marshal(e)
 }
 
 // 定义元素落盘处理器
@@ -220,55 +227,55 @@ type myHandle struct {
 }
 
 func newMyHandle() *myHandle {
-    return &myHandle{}
+return &myHandle{}
 }
 
 // 实现落盘回调
 func (m *myHandle) FlushCall(rows []elem) error {
-    for _, e := range rows {
-        fmt.Println(e)
-    }
-    fmt.Println("刷新成功")
-    return fmt.Errorf("失败1")
+for _, e := range rows {
+fmt.Println(e)
+}
+fmt.Println("刷新成功")
+return fmt.Errorf("失败1")
 }
 
 // 实现落盘失败回调
 func (m *myHandle) FailedCall(rows []elem) error {
-    for _, e := range rows {
-        fmt.Println(e)
-    }
-    fmt.Println("失败回调成功")
-    return fmt.Errorf("失败2")
+for _, e := range rows {
+fmt.Println(e)
+}
+fmt.Println("失败回调成功")
+return fmt.Errorf("失败2")
 }
 
 func TestNewCache(t *testing.T) {
-    c := NewCache(newMyHandle(),
-            WithMaxLength(20), 
-		)
-    c.Start()
+c := NewCache(newMyHandle(),
+WithMaxLength(20),
+)
+c.Start()
 
-    ch := make(chan os.Signal, 1)
+ch := make(chan os.Signal, 1)
 
-    go func() {
-        i := 1
-        for {
-            c.Add(elem{
-                Id:   i,
-                Name: fmt.Sprintf("%v", i),
-            })
-            i++
-            time.Sleep(time.Millisecond * 100)
-            fmt.Println("长度：", c.Len())
-        }
-    }()
+go func () {
+i := 1
+for {
+c.Add(elem{
+Id:   i,
+Name: fmt.Sprintf("%v", i),
+})
+i++
+time.Sleep(time.Millisecond * 100)
+fmt.Println("长度：", c.Len())
+}
+}()
 
-    signal.Notify(ch, os.Interrupt, os.Kill)
+signal.Notify(ch, os.Interrupt, os.Kill)
 
-    select {
-    case <-ch:
-        c.Stop()
-        fmt.Println("stop")
-    }
+select {
+case <-ch:
+c.Stop()
+fmt.Println("stop")
+}
 }
 
 
