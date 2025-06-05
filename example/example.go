@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"midstore"
+	"github.com/hyqc/midstore"
 	"os"
 	"os/signal"
 	"time"

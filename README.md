@@ -211,73 +211,82 @@ midstore.WithFlushInterval(time.Second*30),
 ### 示例1: 初始化并使用 Cache
 
 ```go
-// 定义元素结构结构体
-type elem struct {
-Id   int    `json:"id"`
-Name string `json:"name"`
-}
+package main
 
-// 实现元素结构的方法
-func (e elem) Marshal() ([]byte, error) {
-return json.Marshal(e)
-}
-
-// 定义元素落盘处理器
-type myHandle struct {
-}
-
-func newMyHandle() *myHandle {
-return &myHandle{}
-}
-
-// 实现落盘回调
-func (m *myHandle) FlushCall(rows []elem) error {
-for _, e := range rows {
-fmt.Println(e)
-}
-fmt.Println("刷新成功")
-return fmt.Errorf("失败1")
-}
-
-// 实现落盘失败回调
-func (m *myHandle) FailedCall(rows []elem) error {
-for _, e := range rows {
-fmt.Println(e)
-}
-fmt.Println("失败回调成功")
-return fmt.Errorf("失败2")
-}
-
-func TestNewCache(t *testing.T) {
-c := NewCache(newMyHandle(),
-WithMaxLength(20),
+import (
+	"encoding/json"
+	"fmt"
+	"midstore"
+	"os"
+	"os/signal"
+	"time"
 )
-c.Start()
 
-ch := make(chan os.Signal, 1)
-
-go func () {
-i := 1
-for {
-c.Add(elem{
-Id:   i,
-Name: fmt.Sprintf("%v", i),
-})
-i++
-time.Sleep(time.Millisecond * 100)
-fmt.Println("长度：", c.Len())
-}
-}()
-
-signal.Notify(ch, os.Interrupt, os.Kill)
-
-select {
-case <-ch:
-c.Stop()
-fmt.Println("stop")
-}
+type Elem struct {
+	Id   int    `json:"id"`
+	Name string `json:"name"`
 }
 
+func (e Elem) Marshal() ([]byte, error) {
+	return json.Marshal(e)
+}
+
+type Handle struct{}
+
+func NewHandle() *Handle {
+	return &Handle{}
+}
+
+func (Handle) FlushCall(rows []Elem) error {
+	for _, e := range rows {
+		fmt.Println(e)
+	}
+	return fmt.Errorf("刷新失败")
+}
+
+func (Handle) FailedCall(rows []Elem) error {
+	for _, e := range rows {
+		body, _ := e.Marshal()
+		fmt.Println(fmt.Sprintf("%+v", string(body)))
+	}
+	return fmt.Errorf("刷新失败")
+}
+
+func main() {
+	client := midstore.NewCache(NewHandle(),
+		midstore.WithMaxLength(20),
+		midstore.WithFlushInterval(time.Minute*2),
+		midstore.WithFailedFileDirAndMode(".", "示例2", 0755),
+		midstore.WithFailedBackRows(false),
+	)
+
+	client.Start()
+
+	ch := make(chan os.Signal, 1)
+
+	go func() {
+		i := 1
+		for {
+			client.Add(Elem{
+				Id:   i,
+				Name: fmt.Sprintf("%v", i),
+			})
+			fmt.Println(fmt.Sprintf("值：%v, 长度：%v", i, client.Len()))
+
+			i++
+			time.Sleep(time.Millisecond * 100)
+		}
+	}()
+
+	signal.Notify(ch, os.Interrupt, os.Kill)
+
+	select {
+	case <-ch:
+		client.Stop()
+		fmt.Println("stop")
+	}
+
+}
 
 ```
 
