@@ -108,17 +108,17 @@ failedBackRows    bool
 }
 ```
 
-| 字段名                 | 类型              | 描述                                                      |
-|---------------------|-----------------|---------------------------------------------------------|
-| `flushInterval`     | `time.Duration` | 刷新间隔时间，默认 1 分钟                                          |
-| `maxLength`         | `int`           | 最大缓存条数，超过该值触发刷新，默认 1000                                 |
-| `log`               | `ILog`          | 日志接口实例，默认使用内置控制台日志                                      |
-| `failedFileDir`     | `string`        | 刷新失败后的本地文件保存路径，默认当前目录                                   |
-| `failedFileDirMode` | `os.FileMode`   | 文件夹权限配置                                                 |
-| `failedFileName`    | `string`        | 失败落盘文件名前缀，示例test，则文件名为 test.xxx.log，其中xxx为日期格式为20060102 |
-| `enableLocalBackup` | `bool`          | 是否启用回调失败落盘，默认开启                                         |
-| `writer`            | `IWriter`       | 自定义写入接口                                                 |
-| `failedBackRows`    | `bool`          | 回调失败写入磁盘文件的数据格式，true时一批一行，false一批每行一行                   |
+| 字段名                 | 类型              | 描述                                                                     |
+|---------------------|-----------------|------------------------------------------------------------------------|
+| `flushInterval`     | `time.Duration` | 刷新间隔时间，默认 1 分钟                                                         |
+| `maxLength`         | `int`           | 最大缓存条数，超过该值触发刷新，默认 1000                                                |
+| `log`               | `ILog`          | 日志接口实例，默认使用内置控制台日志                                                     |
+| `failedFileDir`     | `string`        | 刷新失败后的本地文件保存路径，默认当前目录                                                  |
+| `failedFileDirMode` | `os.FileMode`   | 文件夹权限配置                                                                |
+| `failedFileName`    | `string`        | 失败落盘文件名前缀，示例test，则文件名为 test.xxx.log，其中xxx为日期格式为20060102                |
+| `enableLocalBackup` | `bool`          | 是否启用回调失败落盘，默认开启                                                        |
+| `writer`            | `IWriter`       | 自定义写入接口                                                                |
+| `failedBackRows`    | `bool`          | 回调失败写入磁盘文件的数据格式，示例文件: true时一批一行.20250605.log，false时一批每行一行.20250605.log |
 
 ---
 

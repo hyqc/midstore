@@ -43,7 +43,8 @@ func main() {
 	client := midstore.NewCache(NewHandle(),
 		midstore.WithMaxLength(20),
 		midstore.WithFlushInterval(time.Minute*2),
-		midstore.WithFailedFileDirAndMode(".", "test", 0755),
+		midstore.WithFailedFileDirAndMode(".", "示例2", 0755),
+		midstore.WithFailedBackRows(false),
 	)
 
 	client.Start()
