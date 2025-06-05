@@ -216,7 +216,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"midstore"
+	"github.com/yourusername/midstore"
 	"os"
 	"os/signal"
 	"time"
